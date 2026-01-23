@@ -8,7 +8,7 @@ from collections import deque
 import os
 import threading
 import queue
-
+import json
 import argparse
 
 from functools import partial
@@ -349,19 +349,26 @@ class DfddParametersSendWidget(QtWidgets.QWidget):
         self.col_center = None
         self.row_center = None
         self.r_squared  = None
+
+        # You reuse self.confidence in your current code; keep it, but ALSO keep stable refs:
         self.confidence = None
+        self.confidence_min = None
+        self.depth_max = None
+        self.depth_min = None
 
         self.a_base_addresses     = [0xa0, 0x90]
         self.b_base_addresses     = [0xb0, 0xf0]
         self.w0_base_addresses    = [0xc0, 0xc1]
         self.w1_base_addresses    = [0xd0, 0xd1]
         self.w2_base_addresses    = [0xe0, 0xe1]
+
         self.col_center_address     = 0x60
         self.row_center_address     = 0x61
         self.r_squared_base_address = 0x70
-        self.confidence_address     = 0x50
-        self.depth_address          = 0x00
-        self.depth_min_address      = 0x30
+
+        self.confidence_address = 0x50
+        self.depth_address      = 0x00
+        self.depth_min_address  = 0x30
 
         self.no_zones = 16
 
@@ -436,7 +443,7 @@ class DfddParametersSendWidget(QtWidgets.QWidget):
         # ========== Bottom section spanning both columns ==========
         bottom = QtWidgets.QFormLayout()
 
-        # Column & Row Center
+        # Column and Row Center
         col_row_center_title = QtWidgets.QLabel("Column and Row Center")
         col_row_center_title.setFont(QtGui.QFont("Arial", 12, QtGui.QFont.Bold))
         bottom.addRow(col_row_center_title)
@@ -463,7 +470,7 @@ class DfddParametersSendWidget(QtWidgets.QWidget):
         row.addWidget(button)
         bottom.addRow(row)
 
-        # Radius Squared
+        # Radius Squared Values
         radius_squared_title = QtWidgets.QLabel("Radius Squared Values")
         radius_squared_title.setFont(QtGui.QFont("Arial", 12, QtGui.QFont.Bold))
         bottom.addRow(radius_squared_title)
@@ -483,6 +490,7 @@ class DfddParametersSendWidget(QtWidgets.QWidget):
         bottom.addRow(confidence_title)
 
         self.confidence =  [QtWidgets.QHBoxLayout(), make_plaintext_box(self.no_zones), QtWidgets.QPushButton("Set Confidence")]
+        self.confidence_min = self.confidence  # ✅ stable ref for Defaults
         row =      self.confidence[0]
         text_box = self.confidence[1]
         button   = self.confidence[2]
@@ -497,6 +505,7 @@ class DfddParametersSendWidget(QtWidgets.QWidget):
         bottom.addRow(depth_title)
 
         self.confidence =  [QtWidgets.QHBoxLayout(), make_plaintext_box(self.no_zones), QtWidgets.QPushButton("Set Depth")]
+        self.depth_max = self.confidence  # ✅ stable ref for Defaults
         row =      self.confidence[0]
         text_box = self.confidence[1]
         button   = self.confidence[2]
@@ -511,6 +520,7 @@ class DfddParametersSendWidget(QtWidgets.QWidget):
         bottom.addRow(depth_min_title)
 
         self.confidence =  [QtWidgets.QHBoxLayout(), make_plaintext_box(self.no_zones), QtWidgets.QPushButton("Set Depth")]
+        self.depth_min = self.confidence  # ✅ stable ref for Defaults
         row =      self.confidence[0]
         text_box = self.confidence[1]
         button   = self.confidence[2]
@@ -522,9 +532,115 @@ class DfddParametersSendWidget(QtWidgets.QWidget):
         # Add bottom block spanning both columns
         grid.addLayout(bottom, 1, 0, 1, 2)
 
+        # ✅ Defaults button spanning both columns
+        defaults_btn = QtWidgets.QPushButton("Defaults")
+        defaults_btn.clicked.connect(self.load_defaults_and_send)
+        grid.addWidget(defaults_btn, 2, 0, 1, 2)
+
         self.setLayout(grid)
 
+    # ===================== Defaults (JSON) =====================
+    def _defaults_path(self) -> str:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        return os.path.join(base_dir, "dfdd_defaults.json")
 
+    def _set_multiline(self, widget, values, n):
+        if values is None:
+            return
+        if isinstance(values, str):
+            lines = values.splitlines()
+        else:
+            lines = [str(v) for v in list(values)]
+        lines = lines[:int(n)]
+        widget.setPlainText("\n".join(lines))
+
+    def _set_single(self, widget, value):
+        if value is None:
+            return
+        widget.setText(str(value))
+
+    def load_defaults_and_send(self):
+        path = self._defaults_path()
+        if not os.path.exists(path):
+            QtWidgets.QMessageBox.warning(
+                self, "Defaults not found",
+                f"Could not find defaults file:\n{path}"
+            )
+            return
+
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(
+                self, "Defaults error",
+                f"Failed to read/parse JSON:\n{path}\n\n{e}"
+            )
+            return
+
+        # Accept either:
+        #   {"scales": [ { ... }, { ... } ]}
+        # or {"scale0": {...}, "scale1": {...}}
+        scales = cfg.get("scales", None)
+        if scales is None:
+            scales = [cfg.get("scale0", {}), cfg.get("scale1", {})]
+        while len(scales) < 2:
+            scales.append({})
+
+        # --- Apply + send for each scale ---
+        for s in range(2):
+            sc = scales[s] if isinstance(scales[s], dict) else {}
+
+            if "A" in sc:
+                self._set_multiline(self.a_s[s][1], sc.get("A"), self.no_zones)
+                self.send_dfdd_parameter_block(True, self.a_base_addresses[s], self.a_s[s][1], self.no_zones)
+
+            if "B" in sc:
+                self._set_multiline(self.b_s[s][1], sc.get("B"), self.no_zones)
+                self.send_dfdd_parameter_block(True, self.b_base_addresses[s], self.b_s[s][1], self.no_zones)
+
+            if "w0" in sc:
+                self._set_single(self.w0_s[s][1], sc.get("w0"))
+                self.send_dfdd_parameter_block(True, self.w0_base_addresses[s], self.w0_s[s][1], 1)
+
+            if "w1" in sc:
+                self._set_single(self.w1_s[s][1], sc.get("w1"))
+                self.send_dfdd_parameter_block(True, self.w1_base_addresses[s], self.w1_s[s][1], 1)
+
+            if "w2" in sc:
+                self._set_single(self.w2_s[s][1], sc.get("w2"))
+                self.send_dfdd_parameter_block(True, self.w2_base_addresses[s], self.w2_s[s][1], 1)
+
+        # --- Apply + send globals ---
+        g = cfg.get("global", cfg.get("globals", {}))
+        if not isinstance(g, dict):
+            g = {}
+
+        if "col_center" in g:
+            self._set_single(self.col_center[1], g.get("col_center"))
+            self.send_dfdd_parameter_block(False, self.col_center_address, self.col_center[1], 1)
+
+        if "row_center" in g:
+            self._set_single(self.row_center[1], g.get("row_center"))
+            self.send_dfdd_parameter_block(False, self.row_center_address, self.row_center[1], 1)
+
+        if "r_squared" in g:
+            self._set_multiline(self.r_squared[1], g.get("r_squared"), self.no_zones)
+            self.send_dfdd_parameter_block(False, self.r_squared_base_address, self.r_squared[1], self.no_zones)
+
+        if "confidence" in g and self.confidence_min is not None:
+            self._set_multiline(self.confidence_min[1], g.get("confidence"), self.no_zones)
+            self.send_dfdd_parameter_block(True, self.confidence_address, self.confidence_min[1], self.no_zones)
+
+        if "depth_max" in g and self.depth_max is not None:
+            self._set_multiline(self.depth_max[1], g.get("depth_max"), self.no_zones)
+            self.send_dfdd_parameter_block(True, self.depth_address, self.depth_max[1], self.no_zones)
+
+        if "depth_min" in g and self.depth_min is not None:
+            self._set_multiline(self.depth_min[1], g.get("depth_min"), self.no_zones)
+            self.send_dfdd_parameter_block(True, self.depth_min_address, self.depth_min[1], self.no_zones)
+
+    # ===================== Existing send function (unchanged) =====================
     def send_dfdd_parameter_block(self, float_num, base_addr, text_box, n):
         """
         Parse up to n lines from text_box.
@@ -569,4 +685,3 @@ class DfddParametersSendWidget(QtWidgets.QWidget):
             self.write_command.emit({"bytes": return_bytes})
 
             sent += 1
-            
