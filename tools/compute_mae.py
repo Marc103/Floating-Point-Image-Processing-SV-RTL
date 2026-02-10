@@ -12,10 +12,11 @@ import pandas as pd
 DEFAULT_DIR = "."
 CSV_NAME = "compute_mae_results.csv"
 PLOT_MAE_NAME = "mae_vs_target.png"
+PLOT_ME_NAME  = "me_vs_target.png"
 PLOT_GRID_NAME = "depthmap_grid.png"
 
-VMIN = 0.4
-VMAX = 1.0
+VMIN = 0.3
+VMAX = 1.4
 HIGH_DPI = 600
 N_COLS = 7
 # ----------------------------------------
@@ -51,19 +52,28 @@ def main(directory: str):
 
         arr = load_uint8_div128_cropped(fpath)
         target = 0.24 + 0.02 * x
-        mae = float(np.nanmean(np.abs(arr - target)))
 
-        results.append((x, target, mae, fname))
-        samples.append((x, arr, target, mae))
+        err = arr - target
+        mae = float(np.nanmean(np.abs(err)))
+        me  = float(np.nanmean(err))  # signed mean error
 
-        print(f"x={x:02d}: target={target:.2f}, MAE={mae:.4f}")
+        results.append((x, target, mae, me, fname))
+        samples.append((x, arr, target, mae, me))
+
+        print(
+            f"x={x:02d}: target={target:.2f}, "
+            f"MAE={mae:.4f}, ME={me:.4f}"
+        )
 
     if not results:
         print("No cam_1_500_480_x.png files found.")
         return
 
     # Save CSV
-    df = pd.DataFrame(results, columns=["x", "target_m", "MAE_m", "filename"])
+    df = pd.DataFrame(
+        results,
+        columns=["x", "target_m", "MAE_m", "ME_m", "filename"],
+    )
     df.to_csv(os.path.join(directory, CSV_NAME), index=False)
 
     # ------------------------ MAE vs Target Plot ------------------------
@@ -74,8 +84,29 @@ def main(directory: str):
     plt.title("MAE vs Target Depth")
     plt.grid(alpha=0.3)
     plt.tight_layout()
-    plt.savefig(os.path.join(directory, PLOT_MAE_NAME),
-                dpi=HIGH_DPI, bbox_inches="tight", pad_inches=0)
+    plt.savefig(
+        os.path.join(directory, PLOT_MAE_NAME),
+        dpi=HIGH_DPI,
+        bbox_inches="tight",
+        pad_inches=0,
+    )
+    plt.close()
+
+    # ------------------------ ME vs Target Plot ------------------------
+    plt.figure(figsize=(7, 4.2))
+    plt.scatter(df["target_m"], df["ME_m"])
+    plt.axhline(0.0, linestyle="--", linewidth=1, color="gray")
+    plt.xlabel("Target Depth (m)")
+    plt.ylabel("Mean Error (m)")
+    plt.title("Mean Error vs Target Depth")
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(
+        os.path.join(directory, PLOT_ME_NAME),
+        dpi=HIGH_DPI,
+        bbox_inches="tight",
+        pad_inches=0,
+    )
     plt.close()
 
     # ------------------------ Tight Grid with Perfect Row Colorbars ------------------------
@@ -87,7 +118,6 @@ def main(directory: str):
     fig_height = 2.8 * n_rows
     fig = plt.figure(figsize=(fig_width, fig_height))
 
-    # Outer GridSpec: rows × 1
     outer_gs = gridspec.GridSpec(
         n_rows,
         1,
@@ -97,7 +127,6 @@ def main(directory: str):
 
     idx = 0
     for r in range(n_rows):
-        # Subgrid for row r: 1 row × (N_COLS images + 1 colorbar)
         row_gs = gridspec.GridSpecFromSubplotSpec(
             1,
             N_COLS + 1,
@@ -107,18 +136,19 @@ def main(directory: str):
             hspace=0.1,
         )
 
-        # Collect handles for first non-empty image in row
         chosen_im = None
 
         for c in range(N_COLS):
             ax = fig.add_subplot(row_gs[0, c])
 
             if idx < n:
-                x, arr, target, mae = samples[idx]
+                x, arr, target, mae, me = samples[idx]
                 im = ax.imshow(arr, cmap="jet", vmin=VMIN, vmax=VMAX)
 
-                ax.set_title(f"t={target:.2f}m, MAE={mae:.3f}m",
-                             fontsize=7)
+                ax.set_title(
+                    f"t={target:.2f}m, MAE={mae:.3f}m, ME={me:+.3f}m",
+                    fontsize=7,
+                )
                 ax.axis("off")
 
                 if chosen_im is None:
@@ -128,7 +158,7 @@ def main(directory: str):
             else:
                 ax.axis("off")
 
-        # Add colorbar for this row, perfectly aligned to row height
+        # Colorbar for this row
         cax = fig.add_subplot(row_gs[0, -1])
         if chosen_im is not None:
             cbar = fig.colorbar(chosen_im, cax=cax)

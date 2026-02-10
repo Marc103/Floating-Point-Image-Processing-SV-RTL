@@ -304,6 +304,7 @@ class LiveImageViewer:
             a = a.astype(np.uint8)
 
         # "NaN" semantics: raw value 0 is considered invalid → white
+        a[:20] = 0
         nan_mask = (a == 0)
 
         pvmin = self._pvmin
