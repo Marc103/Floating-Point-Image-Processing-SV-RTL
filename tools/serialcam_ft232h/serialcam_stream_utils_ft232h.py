@@ -78,7 +78,7 @@ def ft232h(rx_binary_queue, tx_binary_queue, sn_prefix=b'fsplit', fast=0):
     else:
         ftdev.setTimeouts(100,100)  # in ms
     
-    ftdev.setUSBParameters(64 * 1024, 64 * 1024)  # set rx, tx buffer size in bytes
+    ftdev.setUSBParameters(24 * 1024, 24 * 1024)  # set rx, tx buffer size in bytes
     ftdev.setFlowControl(ft.defines.FLOW_RTS_CTS, 0, 0)
 
     # Read data
@@ -156,8 +156,8 @@ class BinaryDecoder:
                 width_lsb  = rx_binary_np_acc[i + mb_len + 1]
                 height_msb = rx_binary_np_acc[i + mb_len + 2]
                 height_lsb = rx_binary_np_acc[i + mb_len + 3]   
-                self.width      = (int(width_msb) << 8) + width_lsb
-                self.height     = (int(height_msb) << 8) + height_lsb
+                self.width      = (int(width_msb) << 8) + int(width_lsb)
+                self.height     = (int(height_msb) << 8) + int(height_lsb)
                 self.channels   = rx_binary_np_acc[i + mb_len + 4]
                 self.data_width = rx_binary_np_acc[i + mb_len + 5]
                 matching_indices.append(i)
